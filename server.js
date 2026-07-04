@@ -1099,9 +1099,62 @@ function getStructureState(trendDirection, mtfManager, PRO_CONFIG) {
   };
 }
 
+// ⭐⭐⭐ Detertar Tendencia de Reversão⭐⭐⭐
+function detectarReversaoTendencia(trendDirection, candles, rsiValues, hist, prevHist, config = {}) {
+  const {
+    rsiLimiarCall     = 45,
+    rsiLimiarPut      = 55,
+    lookbackEstrutura = 3
+  } = config;
+
+  if (trendDirection === 'NEUTRAL' || !candles || candles.length < lookbackEstrutura + 2) {
+    return { reversao: false, forca: 0, motivo: 'sem tendência de fundo ou dados insuficientes' };
+  }
+
+  const rsiSaindo = trendDirection === 'UP'
+    ? rsiLeaving(rsiValues, rsiLimiarCall, 'UP')
+    : rsiLeaving(rsiValues, rsiLimiarPut, 'DOWN');
+
+  const direcaoHist = trendDirection === 'UP' ? 'CALL' : 'PUT';
+  const histVirou = hasHistogramShift(hist, prevHist, direcaoHist);
+
+  const recentes = candles.slice(-lookbackEstrutura);
+  const lows   = recentes.map(c => parseFloat(c.low));
+  const highs  = recentes.map(c => parseFloat(c.high));
+  const closes = recentes.map(c => parseFloat(c.close));
+
+  let estruturaOk = false;
+  if (trendDirection === 'UP') {
+    const higherLow = lows[lows.length - 1] > lows[lows.length - 2];
+    const fechoForte = closes[closes.length - 1] > (highs[highs.length - 1] + lows[lows.length - 1]) / 2;
+    estruturaOk = higherLow && fechoForte;
+  } else if (trendDirection === 'DOWN') {
+    const lowerHigh = highs[highs.length - 1] < highs[highs.length - 2];
+    const fechoFraco = closes[closes.length - 1] < (highs[highs.length - 1] + lows[lows.length - 1]) / 2;
+    estruturaOk = lowerHigh && fechoFraco;
+  }
+
+  let pontos = 0;
+  const motivos = [];
+  if (rsiSaindo)   { pontos += 40; motivos.push('RSI a sair do pullback'); }
+  if (histVirou)   { pontos += 35; motivos.push('histograma virou a favor da tendência'); }
+  if (estruturaOk) { pontos += 25; motivos.push(trendDirection === 'UP' ? 'higher low + fecho forte' : 'lower high + fecho fraco'); }
+
+  const reversao = pontos >= 60;
+
+  return {
+    reversao,
+    forca: pontos,
+    direcao: trendDirection === 'UP' ? 'CALL' : 'PUT',
+    motivo: motivos.length > 0
+      ? `Reversão de pullback (${pontos}/100): ${motivos.join(' + ')}`
+      : 'sem sinais de reversão do pullback ainda'
+  };
+}
+
 // ⭐⭐⭐ getEntryTrigger ATUALIZADO com CONDIÇÃO 2-B + CONDIÇÃO 4 + DeMarker ⭐⭐⭐
-function getEntryTrigger(trendDirection, mtfManager, PRO_CONFIG, demarkerInfo = null, tipoAtivo = 'indice_normal') {
-	const triggerTF      = PRO_CONFIG?.triggerTF      || 'M5';
+function getEntryTrigger(trendDirection, mtfManager, PRO_CONFIG, demarkerInfo = null, tipoAtivo = 'indice_normal', candlesMap = null) {
+const triggerTF      = PRO_CONFIG?.triggerTF      || 'M5';
   const triggerMinADX  = PRO_CONFIG?.triggerMinADX  ?? 25;
   const rsiMinCall     = PRO_CONFIG?.triggerMinRSI_CALL ?? 50;
   const rsiMinPut      = PRO_CONFIG?.triggerMinRSI_PUT  ?? 50;
@@ -1180,6 +1233,12 @@ if (structureRefTF === triggerTF && PRO_CONFIG?.confirmTF) {
 const structureData = getTFData(structureRefTF, mtfManager, true);
 const structureBias = structureData?.bias || 'HOLD';
 
+let reversaoInfo = { reversao: false, forca: 0 };
+if (candlesMap && candlesMap[triggerTF]) {
+  const rsiArrTrigger = calcularRSIArray(candlesMap[triggerTF], 14, 5);
+  reversaoInfo = detectarReversaoTendencia(trendDirection, candlesMap[triggerTF], rsiArrTrigger, hist, prevHist);
+}
+
  if (trendDirection === 'UP') {
     // CONDIÇÃO 1: Cruzamento recente (shift) — agora exige ADX mínimo real
     if (rsi > rsiMinCall && hist > 0 && hasHistogramShift(hist, prevHist, 'CALL') && adx >= ADX_MINIMO_CRUZAMENTO) {
@@ -1210,7 +1269,10 @@ const structureBias = structureData?.bias || 'HOLD';
         microRSI >= 40 &&
         microADX >= 10 &&
         !demSaysSell) {
-      return { ok: true, reason: `${triggerTF} CALL trigger (PUT a perder força — ${microTFKey} já em CALL, reversão iminente a favor da tendência UP)` };
+     return { ok: true, reason: `${triggerTF} CALL trigger (PUT a perder força — ${microTFKey} já em CALL, reversão iminente a favor da tendência UP)` };
+    }
+    if (reversaoInfo.reversao && reversaoInfo.direcao === 'CALL' && adx >= ADX_MINIMO_CRUZAMENTO) {
+      return { ok: true, reason: `${triggerTF} CALL trigger (${reversaoInfo.motivo})`, triggerTF, reversao: reversaoInfo };
     }
  } else if (trendDirection === 'DOWN') {
     // CONDIÇÃO 1: Cruzamento recente (shift) — agora exige ADX mínimo real
@@ -1242,11 +1304,14 @@ const structureBias = structureData?.bias || 'HOLD';
         microRSI <= 60 &&
         microADX >= 10 &&
         !demSaysBuy) {
-      return { ok: true, reason: `${triggerTF} PUT trigger (CALL a perder força — ${microTFKey} já em PUT, reversão iminente a favor da tendência DOWN)` };
+ return { ok: true, reason: `${triggerTF} PUT trigger (CALL a perder força — ${microTFKey} já em PUT, reversão iminente a favor da tendência DOWN)` };
+    }
+    if (reversaoInfo.reversao && reversaoInfo.direcao === 'PUT' && adx >= ADX_MINIMO_CRUZAMENTO) {
+      return { ok: true, reason: `${triggerTF} PUT trigger (${reversaoInfo.motivo})`, triggerTF, reversao: reversaoInfo };
     }
   }
 
-  return { ok: false, reason: `${triggerTF} sem condições de entrada`, triggerTF };
+  return { ok: false, reason: `${triggerTF} sem condições de entrada`, triggerTF, reversao: reversaoInfo };
 }
 
 function resolveSignal(trendState, structureState, entryState, mode) {
@@ -1878,27 +1943,7 @@ if (aceleracaoSpread) {
   console.log(`${aceleracaoSpread.label}: ${aceleracaoSpread.totalTfsAcelerados}/${aceleracaoSpread.totalTfs} TFs | Impacto score: -${Math.round((1 - aceleracaoSpread.fatorImpacto) * 100)}%`);
 }
 
-const h1ADXFiltro  = getTFData('H1', mtfManager)?.adx  ?? 0;
-const m15ADXFiltro = getTFData('M15', mtfManager)?.adx ?? 0;
 
-// ⭐ FIX: ativos de pulso (Boom/Crash/Jump/Step) têm ADX naturalmente baixo entre spikes
-const isAtivoPulsoFiltroADX = ['boom_index','crash_index','jump_index','step_index','criptomoeda','volatility_index'].includes(tipoAtivo);
-	  
-if (!isAtivoPulsoFiltroADX && mode !== 'SNIPER' && h1ADXFiltro < 15 && m15ADXFiltro < 15) {
-  console.log(`⛔ Mercado lateral (ADX H1 ${h1ADXFiltro.toFixed(1)}, M15 ${m15ADXFiltro.toFixed(1)}) → HOLD`);
-  consolidated.signal = 'HOLD';
-  consolidated.confidence = 0;
-  consolidated.score = 0;
-  consolidated.reasons = [
-    "😴 Mercado lateral — H1 e M15 sem tendência",
-    `💪 ADX H1 (${h1ADXFiltro.toFixed(1)}) e M15 (${m15ADXFiltro.toFixed(1)}) estão fracos`,
-    "💡 Aguarda que o ADX suba acima de 15 para indicar tendência"
-  ];
-  consolidated.zona = 'C';
-  bloqueioGlobal = true;
-} else if (isAtivoPulsoFiltroADX && mode !== 'SNIPER' && h1ADXFiltro < 15 && m15ADXFiltro < 15) {
-  console.log(`⚠️ ADX baixo em ativo de pulso (H1 ${h1ADXFiltro.toFixed(1)}, M15 ${m15ADXFiltro.toFixed(1)}) — PulseEngine no controlo`);
-}
 // ⭐⭐⭐ NOVA VALIDAÇÃO MACRO (usa PRO_CONFIG para cada modo)
 const macroData = getTFData(PRO_CONFIG.macroTF, mtfManager, true);
 const confirmData = PRO_CONFIG.confirmTF ? getTFData(PRO_CONFIG.confirmTF, mtfManager, true) : null;
@@ -1965,7 +2010,7 @@ if (bloqueioGlobal) {
 
   const trendState = getTrendState(mtfManager, PRO_CONFIG);
   const structureState = getStructureState(trendState.direction, mtfManager, PRO_CONFIG);
-	const entryState = getEntryTrigger(trendState.direction, mtfManager, PRO_CONFIG, demarkerInfo, tipoAtivo);
+const entryState = getEntryTrigger(trendState.direction, mtfManager, PRO_CONFIG, demarkerInfo, tipoAtivo, candlesMap);
 	
   // ⭐⭐⭐ VALIDAÇÃO DE DIVERGÊNCIA MACRO (antes de resolver o sinal)
   const divergenciaMacro = detectarDivergenciaMacro(mtfManager, PRO_CONFIG, regimeAtual);
