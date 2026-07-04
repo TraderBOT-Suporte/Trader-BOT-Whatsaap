@@ -19,6 +19,201 @@ const PulseEngine = require('./pulse-engine'); // ⭐ Motor de ativos de pulso
 // ⭐ Instância global — mantém memória de spikes entre requests
 const pulseEngine = new PulseEngine();
 
+
+// ⭐⭐⭐ SCHEDULER DE SINAIS AUTOMÁTICO ⭐⭐⭐
+// WATCHLIST fixa: Gold (forex, horário limitado) + BTC (24/7)
+const WATCHLIST = [
+  { symbol: 'frxXAUUSD', mode: 'SNIPER', forexOnly: true },
+  { symbol: 'cryBTCUSD', mode: 'SNIPER', forexOnly: false }
+];
+
+// Máquina de estados por ativo+modo: IDLE ↔ AGUARDANDO_REVERSÃO
+const signalState = {};
+
+// Verifica se mercado forex está aberto (UTC)
+function isForexMarketOpen() {
+  const now = new Date();
+  const utcDay = now.getUTCDay();
+  const utcHour = now.getUTCHours();
+  
+  // Domingo: abre 22:00 UTC
+  if (utcDay === 0) return utcHour >= 22;
+  // Sexta: fecha 22:00 UTC
+  if (utcDay === 5) return utcHour < 22;
+  // Sábado: fechado
+  if (utcDay === 6) return false;
+  // Segunda a Quinta: aberto 24h
+  return true;
+}
+
+// Formata mensagem de sinal para Telegram/WhatsApp
+function formatSignalMessage(symbol, signal, confidence, score, reasons, data) {
+  const nomeAtivo = symbol === 'frxXAUUSD' ? '🥇 OURO (XAU/USD)' : 
+                    symbol === 'cryBTCUSD' ? '₿ BITCOIN (BTC/USD)' : symbol;
+  const emoji = signal === 'CALL' ? '🟢 CALL 📈' : '🔴 PUT 📉';
+  
+  const zona = data.consolidated?.zona || 'B';
+  const zonaLabel = zona === 'A' ? '🔥 FORTE' : zona === 'B' ? '⚠️ MODERADO' : '💤 FRACO';
+  
+  const price = data.consolidated?.price 
+    ? `$${Number(data.consolidated.price).toFixed(2)}` 
+    : 'N/A';
+  
+  let message = `🤖 *SINAL DE TRADING*\n\n`;
+  message += `📊 *Ativo:* ${nomeAtivo}\n`;
+  message += `🎯 *Sinal:* ${emoji}\n`;
+  message += `💰 *Preço:* ${price}\n`;
+  message += `📈 *Confiança:* ${(confidence * 100).toFixed(1)}%\n`;
+  message += `⭐ *Score:* ${score}/100\n`;
+  message += `🏷️ *Zona:* ${zonaLabel}\n`;
+  
+  // TP/SL se disponível
+  if (data.suggestion && data.suggestion.stopLoss && data.suggestion.takeProfit) {
+    message += `\n🛑 *Stop Loss:* $${Number(data.suggestion.stopLoss).toFixed(2)}\n`;
+    message += `🎯 *Take Profit:* $${Number(data.suggestion.takeProfit).toFixed(2)}\n`;
+  }
+  
+  // Razões resumidas (máx 3)
+  if (reasons && reasons.length > 0) {
+    message += `\n📝 *Razões:*\n`;
+    reasons.slice(0, 3).forEach(r => {
+      const clean = r.replace(/[*_`]/g, '').substring(0, 100);
+      message += `• ${clean}\n`;
+    });
+  }
+  
+  message += `\n⏰ ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
+  
+  return message;
+}
+
+// Dispara sinal para Telegram e WhatsApp em paralelo
+async function dispatchSignal(message, symbol, signal) {
+  // 1. Telegram (direto)
+  const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
+  const telegramChatId = process.env.TELEGRAM_CHAT_ID;
+  
+  if (telegramToken && telegramChatId) {
+    try {
+      await fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: telegramChatId,
+          text: message,
+          parse_mode: 'Markdown'
+        })
+      });
+      console.log(`📨 Telegram ✅: ${symbol} ${signal}`);
+    } catch (err) {
+      console.error(`❌ Erro Telegram:`, err.message);
+    }
+  }
+  
+  // 2. WhatsApp (via Servidor B)
+  const whatsappBotUrl = process.env.WHATSAPP_BOT_URL;
+  const internalKey = process.env.WHATSAPP_BOT_INTERNAL_KEY;
+  const groupId = process.env.WHATSAPP_GROUP_ID;
+  
+  if (whatsappBotUrl && internalKey && groupId) {
+    try {
+      const res = await fetch(`${whatsappBotUrl}/api/trading-signal`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-internal-key': internalKey
+        },
+        body: JSON.stringify({ groupId, message })
+      });
+      console.log(`📱 WhatsApp ${res.ok ? '✅' : '❌'}: ${symbol} ${signal}`);
+    } catch (err) {
+      console.error(`❌ Erro WhatsApp:`, err.message);
+    }
+  }
+}
+
+// Ciclo do scheduler — corre a cada 60 segundos
+async function runSchedulerCycle() {
+  // Só executa se o cliente Deriv estiver conectado
+  if (!derivClient || !derivClient.ws || derivClient.ws.readyState !== 1) {
+    console.log('⏰ [Scheduler] Deriv não conectado — a aguardar...');
+    return;
+  }
+  
+  console.log(`\n⏰ [Scheduler] Ciclo ${new Date().toISOString()}`);
+  
+  for (const item of WATCHLIST) {
+    // Verifica se deve analisar
+    if (item.forexOnly && !isForexMarketOpen()) {
+      console.log(`⏭️ ${item.symbol} — mercado forex fechado`);
+      continue;
+    }
+    
+    try {
+      // Cria um token JWT temporário para autenticação interna
+      const internalToken = jwt.sign(
+        { userId: 'scheduler', purpose: 'internal' }, 
+        SECRETS['365'], 
+        { expiresIn: 120 }
+      );
+      
+      const response = await fetch(`${SELF_URL}/api/analyze`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${internalToken}`
+        },
+        body: JSON.stringify({ symbol: item.symbol, mode: item.mode })
+      });
+      
+      if (!response.ok) {
+        console.error(`❌ [Scheduler] ${item.symbol} — HTTP ${response.status}`);
+        continue;
+      }
+      
+      const data = await response.json();
+      if (!data.success || !data.consolidated) continue;
+      
+      const { signal, confidence, score, reasons } = data.consolidated;
+      const stateKey = `${item.symbol}_${item.mode}`;
+      const currentState = signalState[stateKey] || { state: 'IDLE', lastSignal: null };
+      
+      // ⭐ Máquina de estados
+      if ((signal === 'CALL' || signal === 'PUT') && currentState.state === 'IDLE') {
+        // Novo sinal! Dispara
+        const message = formatSignalMessage(item.symbol, signal, confidence, score, reasons, data);
+        console.log(`🚀 [Scheduler] NOVO SINAL: ${item.symbol} ${signal} (score: ${score})`);
+        
+        await dispatchSignal(message, item.symbol, signal);
+        
+        signalState[stateKey] = { 
+          state: 'AGUARDANDO_REVERSÃO', 
+          lastSignal: signal,
+          timestamp: Date.now()
+        };
+        
+      } else if (currentState.state === 'AGUARDANDO_REVERSÃO') {
+        // Verifica exaustão ou mudança de sinal
+        const m1Timing = data.consolidated.m1_timing;
+        const exausto = m1Timing?.exaustao?.exausto || false;
+        const sinalMudou = (signal === 'HOLD') || 
+                          (signal !== 'HOLD' && signal !== currentState.lastSignal);
+        
+        if (exausto || sinalMudou) {
+          const motivo = exausto ? 'exaustão atingida' : `sinal mudou para ${signal}`;
+          console.log(`🔄 [Scheduler] ${item.symbol} voltou a IDLE (${motivo})`);
+          signalState[stateKey] = { state: 'IDLE', lastSignal: null };
+        } else {
+          console.log(`⏳ [Scheduler] ${item.symbol} — aguardando reversão`);
+        }
+      }
+      
+    } catch (err) {
+      console.error(`❌ [Scheduler] Erro ${item.symbol}:`, err.message);
+    }
+  }
+}
+
 const app = express();
 
 // ========== INDICADORES AUXILIARES (EMA, RSI, etc.) ==========
@@ -2936,5 +3131,29 @@ process.on('SIGTERM', () => {
   });
 });
 process.on('SIGINT', () => process.emit('SIGTERM'));
+
+// ⭐⭐⭐ INICIAR SCHEDULER AUTOMÁTICO ⭐⭐⭐
+const SCHEDULER_INTERVAL_MS = 60 * 1000; // 1 minuto
+
+// Espera conexão estar estável antes de iniciar
+setTimeout(() => {
+  console.log('\n⏰ Iniciando scheduler automático...');
+  console.log(`📋 Watchlist: ${WATCHLIST.map(w => w.symbol).join(', ')}`);
+  console.log(`🔄 Ciclo: a cada ${SCHEDULER_INTERVAL_MS / 1000}s`);
+  
+  // Primeira execução imediata
+  runSchedulerCycle().catch(err => {
+    console.error('❌ Erro no primeiro ciclo:', err.message);
+  });
+  
+  // Ciclos seguintes
+  setInterval(() => {
+    runSchedulerCycle().catch(err => {
+      console.error('❌ Erro no ciclo:', err.message);
+    });
+  }, SCHEDULER_INTERVAL_MS);
+  
+  console.log('✅ Scheduler ativo');
+}, 10000); // Espera 10 segundos após o boot
 
 module.exports = app;
