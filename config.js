@@ -153,7 +153,7 @@ module.exports = {
         }
     },
 
-    // ================= PRO ENGINE – 3 CAMADAS =================
+    // ================= PRO ENGINE – 3 CAMADAS (AJUSTADO) =================
     PRO_ENGINE: {
         MODES: {
             SNIPER: {
@@ -161,15 +161,15 @@ module.exports = {
                 confirmTF: null,
                 structureTF: 'M15',
                 triggerTF: 'M1',
-                macroMinADX: 12,            // ⭐ 15 → 12
-                structureMinADX: 10,        // ⭐ 12 → 10
-                triggerMinADX: 15,          // ⭐ 15
-                triggerMinRSI_CALL: 48,     // ⭐ 50 → 48
-                triggerMinRSI_PUT: 52,      // ⭐ 50 → 52 (PUT precisa RSI < 52)
+                macroMinADX: 22,            // ⬆️ 15 → 22 (força real)
+                structureMinADX: 20,         // ⬆️ 15 → 20
+                triggerMinADX: 18,           // Mantém (gatilho pode ser mais baixo)
+                triggerMinRSI_CALL: 48,
+                triggerMinRSI_PUT: 52,
                 microTF: null,
-                microMinADX: 12,            // ⭐ 15 → 12
-                microMinRSI_CALL: 42,       // ⭐ 45 → 42
-                microMinRSI_PUT: 58,        // ⭐ 55 → 58
+                microMinADX: 12,             // Mantém
+                microMinRSI_CALL: 42,
+                microMinRSI_PUT: 58,
                 useHistogram: true,
                 requireMacroAligned: true,
                 REQUIRE_ALIGNMENT: 2
@@ -179,16 +179,16 @@ module.exports = {
                 confirmTF: 'H1',
                 structureTF: 'M5',
                 triggerTF: 'M5',
-                macroMinADX: 18,            // ⭐ 20 → 18
-                confirmMinADX: 12,          // ⭐ 14 → 12
-                structureMinADX: 16,        // ⭐ 16 
-                triggerMinADX: 14,          // ⭐ 16 → 14
-                triggerMinRSI_CALL: 48,     // ⭐ 50 → 48
-                triggerMinRSI_PUT: 52,      // ⭐ 50 → 52 (PUT precisa RSI < 52)
+                macroMinADX: 22,             // ⬆️ 18 → 22
+                confirmMinADX: 20,           // ⬆️ 15 → 20
+                structureMinADX: 20,         // ⬆️ 17 → 20
+                triggerMinADX: 18,           // ⬇️ 20 → 18 (M5 pode ser mais solto)
+                triggerMinRSI_CALL: 48,
+                triggerMinRSI_PUT: 52,
                 microTF: 'M1',
-                microMinADX: 10,            // ⭐ 12 → 10
-                microMinRSI_CALL: 38,       // ⭐ 40 → 38
-                microMinRSI_PUT: 62,        // ⭐ 60 → 62
+                microMinADX: 15,             // ⬇️ 18 → 15 (micro timing)
+                microMinRSI_CALL: 38,
+                microMinRSI_PUT: 62,
                 useHistogram: true,
                 requireMacroAligned: true,
                 REQUIRE_ALIGNMENT: 2
@@ -198,16 +198,16 @@ module.exports = {
                 confirmTF: 'H4',
                 structureTF: 'H1',
                 triggerTF: 'M15',
-                macroMinADX: 18,            // ⭐ 20 → 18
-                confirmMinADX: 16,          // ⭐ 18 → 16
-                structureMinADX: 16,        // ⭐ 18 → 16
-                triggerMinADX: 14,          // ⭐ 14
-                triggerMinRSI_CALL: 48,     // ⭐ 50 → 48
-                triggerMinRSI_PUT: 52,      // ⭐ 50 → 52 (PUT precisa RSI < 52)
+                macroMinADX: 20,             // Mantém (20 é o mínimo do mínimo)
+                confirmMinADX: 20,           // ⬆️ 19 → 20
+                structureMinADX: 20,         // ⬆️ 16 → 20 (crítico!)
+                triggerMinADX: 18,           // ⬇️ 20 → 18
+                triggerMinRSI_CALL: 48,
+                triggerMinRSI_PUT: 52,
                 microTF: 'M5',
-                microMinADX: 12,            // ⭐ 14 → 12
-                microMinRSI_CALL: 42,       // ⭐ 45 → 42
-                microMinRSI_PUT: 58,        // ⭐ 55 → 58
+                microMinADX: 18,             // ⬇️ 20 → 18
+                microMinRSI_CALL: 42,
+                microMinRSI_PUT: 58,
                 useHistogram: true,
                 requireMacroAligned: true,
                 REQUIRE_ALIGNMENT: 3
@@ -217,16 +217,16 @@ module.exports = {
                 confirmTF: 'H24',
                 structureTF: 'H1',
                 triggerTF: 'M15',
-                macroMinADX: 20,            // ⭐ 22 → 20
-                confirmMinADX: 18,          // ⭐ 20 → 18
-                structureMinADX: 14,        // ⭐ 16 → 14
-                triggerMinADX: 14,          // ⭐ 15 → 14
-                triggerMinRSI_CALL: 48,     // ⭐ 50 → 48
-                triggerMinRSI_PUT: 52,      // ⭐ 50 → 52 (PUT precisa RSI < 52)
+                macroMinADX: 20,             // Mantém
+                confirmMinADX: 20,           // ⬆️ 18 → 20
+                structureMinADX: 20,         // ⬆️ 14 → 20 (ESSENCIAL!)
+                triggerMinADX: 16,           // ⬆️ 14 → 16 (levemente maior)
+                triggerMinRSI_CALL: 48,
+                triggerMinRSI_PUT: 52,
                 microTF: 'M5',
-                microMinADX: 12,            // ⭐ 14 → 12
-                microMinRSI_CALL: 42,       // ⭐ 45 → 42
-                microMinRSI_PUT: 58,        // ⭐ 55 → 58
+                microMinADX: 18,             // ⬇️ 20 → 18
+                microMinRSI_CALL: 42,
+                microMinRSI_PUT: 58,
                 useHistogram: true,
                 requireMacroAligned: true,
                 REQUIRE_ALIGNMENT: 3
@@ -241,7 +241,7 @@ module.exports = {
         }
     },
 
-        // ================= LÓGICA MULTI-TIMEFRAME =================
+    // ================= LÓGICA MULTI-TIMEFRAME =================
     MULTI_TIMEFRAME_LOGIC: {
         H4_WEIGHT: 0.45,
         H1_WEIGHT: 0.25,
@@ -262,7 +262,7 @@ module.exports = {
             PESCADOR: true,
             BALEEIRO: true
         }
-    },  // ⭐ FALTAVA ESTA VÍRGULA!
+    },
 
     // ================= BOT SHIELD CONFIG =================
     BOT_SHIELD_CONFIG: {
